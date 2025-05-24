@@ -63,9 +63,6 @@ func getQuestions(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HT
 	pageSizeNum, _ := strconv.Atoi(pageSize)
 
 	builder := expression.Key("exam_id").Equal(expression.Value(examId))
-	if hasLastEvaluatedKey {
-		builder = builder.And(expression.Key("question_id").BeginsWith(lastEvaluatedKey))
-	}
 	expr, _ := expression.NewBuilder().WithKeyCondition(builder).Build()
 
 	input := &dynamodb.QueryInput{
@@ -74,6 +71,13 @@ func getQuestions(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HT
 		ExpressionAttributeNames:  expr.Names(),
 		ExpressionAttributeValues: expr.Values(),
 		Limit:                     aws.Int32(int32(pageSizeNum)),
+	}
+
+	if hasLastEvaluatedKey {
+		input.ExclusiveStartKey = map[string]types.AttributeValue{
+			"exam_id":     &types.AttributeValueMemberS{Value: examId},
+			"question_id": &types.AttributeValueMemberN{Value: lastEvaluatedKey},
+		}
 	}
 
 	result, err := dbClient.Query(context.TODO(), input)
