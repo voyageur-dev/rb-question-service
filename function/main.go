@@ -16,24 +16,20 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
-	"time"
 )
 
 const (
-	getBookMarksPath   = "GET /rb/bookmarks"
-	createBookmarkPath = "POST /rb/bookmarks"
-	deleteBookmarkPath = "DELETE /rb/bookmarks/{examId}/{questionId}"
+	getQuestionsPath = "GET /rb/questions"
 )
 
 var (
-	bookmarksTableName string
+	questionsTableName string
 
 	dbClient *dynamodb.Client
 )
 
 func init() {
-	bookmarksTableName = os.Getenv("BOOKMARKS_TABLE_NAME")
+	questionsTableName = os.Getenv("QUESTIONS_TABLE_NAME")
 
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -48,12 +44,8 @@ func handler(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPRes
 
 	return func() (events.APIGatewayV2HTTPResponse, error) {
 		switch path {
-		case getBookMarksPath:
-			return getBookmarks(request)
-		case createBookmarkPath:
-			return createBookmark(request)
-		case deleteBookmarkPath:
-			return deleteBookmark(request)
+		case getQuestionsPath:
+			return getQuestions(request)
 		default:
 			return events.APIGatewayV2HTTPResponse{
 				Body:       "Path Not Found",
@@ -63,126 +55,79 @@ func handler(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPRes
 	}()
 }
 
-func getBookmarks(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
+func getQuestions(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
 	queryParams := request.QueryStringParameters
-	examId, ext := queryParams["examId"]
+	examId, _ := queryParams["examId"]
+	lastEvaluatedKey, hasLastEvaluatedKey := queryParams["lastEvaluatedKey"]
+	pageSize, _ := queryParams["pageSize"]
+	pageSizeNum, _ := strconv.Atoi(pageSize)
 
-	userId, _ := request.RequestContext.Authorizer.JWT.Claims["sub"]
-
-	builder := expression.Key("user_id").Equal(expression.Value(userId))
-	if ext {
-		builder = builder.And(expression.Key("exam_question_key").BeginsWith(examId))
+	builder := expression.Key("exam_id").Equal(expression.Value(examId))
+	if hasLastEvaluatedKey {
+		builder = builder.And(expression.Key("question_id").BeginsWith(lastEvaluatedKey))
 	}
 	expr, _ := expression.NewBuilder().WithKeyCondition(builder).Build()
 
 	input := &dynamodb.QueryInput{
-		TableName:                 aws.String(bookmarksTableName),
+		TableName:                 aws.String(questionsTableName),
 		KeyConditionExpression:    expr.KeyCondition(),
 		ExpressionAttributeNames:  expr.Names(),
 		ExpressionAttributeValues: expr.Values(),
+		Limit:                     aws.Int32(int32(pageSizeNum)),
 	}
 
 	result, err := dbClient.Query(context.TODO(), input)
 	if err != nil {
-		log.Println(fmt.Sprintf("Error getting bookmarks for %s, %v", userId, err))
+		log.Println(fmt.Sprintf("Error getting questions: %v", err))
 		return events.APIGatewayV2HTTPResponse{
-			Body:       "Error getting bookmarks",
+			Body:       "Error getting questions",
 			StatusCode: http.StatusInternalServerError,
 		}, nil
 	}
 
-	bookmarks := make(map[string][]int)
-	for _, item := range result.Items {
-		parts := strings.Split(item["exam_question_key"].(*types.AttributeValueMemberS).Value, "#")
-		idx, err := strconv.Atoi(parts[1])
-		if err != nil {
-			continue
+	questions := make([]models.Question, result.Count)
+	for i, item := range result.Items {
+		s3ImageUrls := make([]string, 0)
+		if itemS3ImageUrls, ok := item["s3_image_urls"]; ok {
+			s3ImageUrls = make([]string, len(itemS3ImageUrls.(*types.AttributeValueMemberL).Value))
+			for j, url := range item["s3_image_urls"].(*types.AttributeValueMemberL).Value {
+				s3ImageUrls[j] = url.(*types.AttributeValueMemberS).Value
+			}
 		}
 
-		bookmarks[parts[0]] = append(bookmarks[parts[0]], idx)
+		options := make([]models.Option, len(item["options"].(*types.AttributeValueMemberL).Value))
+		for j, option := range item["options"].(*types.AttributeValueMemberL).Value {
+			optionS3ImageUrls := make([]string, 0)
+			if itemOptionS3ImageUrls, ok := option.(*types.AttributeValueMemberM).Value["s3_image_urls"]; ok {
+				optionS3ImageUrls = make([]string, len(itemOptionS3ImageUrls.(*types.AttributeValueMemberL).Value))
+				for k, url := range itemOptionS3ImageUrls.(*types.AttributeValueMemberL).Value {
+					optionS3ImageUrls[k] = url.(*types.AttributeValueMemberS).Value
+				}
+			}
+
+			options[j] = models.Option{
+				IsCorrect:   option.(*types.AttributeValueMemberM).Value["is_correct"].(*types.AttributeValueMemberBOOL).Value,
+				Text:        option.(*types.AttributeValueMemberM).Value["text"].(*types.AttributeValueMemberS).Value,
+				S3ImageURLs: optionS3ImageUrls,
+			}
+		}
+
+		questionId, _ := strconv.Atoi(item["question_id"].(*types.AttributeValueMemberN).Value)
+		questions[i] = models.Question{
+			ExamID:      item["exam_id"].(*types.AttributeValueMemberS).Value,
+			QuestionID:  questionId,
+			Options:     options,
+			Question:    item["question"].(*types.AttributeValueMemberS).Value,
+			S3ImageURLs: s3ImageUrls,
+		}
 	}
 
-	response, _ := json.Marshal(models.GetBookmarksResponse{
-		Bookmarks: bookmarks,
+	response, _ := json.Marshal(models.GetQuestionsResponse{
+		Questions: questions,
 	})
 
 	return events.APIGatewayV2HTTPResponse{
 		Body:       string(response),
-		StatusCode: http.StatusOK,
-	}, nil
-}
-
-func createBookmark(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
-	userId, _ := request.RequestContext.Authorizer.JWT.Claims["sub"]
-
-	body := make(map[string]interface{})
-	err := json.Unmarshal([]byte(request.Body), &body)
-	if err != nil {
-		log.Println(fmt.Sprintf("Error creating bookmark for %s, %v", userId, err))
-		return events.APIGatewayV2HTTPResponse{
-			Body:       "Error creating bookmark",
-			StatusCode: http.StatusBadRequest,
-		}, nil
-	}
-
-	examId := body["examId"].(string)
-	questionId := int64(body["questionId"].(float64))
-
-	item := map[string]types.AttributeValue{
-		"user_id": &types.AttributeValueMemberS{Value: userId},
-		"exam_question_key": &types.AttributeValueMemberS{
-			Value: fmt.Sprintf("%s#%d", examId, questionId),
-		},
-		"created_at": &types.AttributeValueMemberS{
-			Value: time.Now().UTC().Format(time.RFC3339),
-		},
-	}
-
-	_, err = dbClient.PutItem(context.TODO(), &dynamodb.PutItemInput{
-		TableName: aws.String(bookmarksTableName),
-		Item:      item,
-	})
-
-	if err != nil {
-		log.Println(fmt.Sprintf("Error creating bookmark for %s, %v", userId, err))
-		return events.APIGatewayV2HTTPResponse{
-			Body:       "Error creating bookmark",
-			StatusCode: http.StatusInternalServerError,
-		}, nil
-	}
-
-	return events.APIGatewayV2HTTPResponse{
-		StatusCode: http.StatusCreated,
-	}, nil
-}
-
-func deleteBookmark(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
-	userId, _ := request.RequestContext.Authorizer.JWT.Claims["sub"]
-
-	examId := request.PathParameters["examId"]
-	questionId := request.PathParameters["questionId"]
-
-	key := map[string]types.AttributeValue{
-		"user_id": &types.AttributeValueMemberS{Value: userId},
-		"exam_question_key": &types.AttributeValueMemberS{
-			Value: fmt.Sprintf("%s#%s", examId, questionId),
-		},
-	}
-
-	_, err := dbClient.DeleteItem(context.TODO(), &dynamodb.DeleteItemInput{
-		TableName: aws.String(bookmarksTableName),
-		Key:       key,
-	})
-
-	if err != nil {
-		log.Println(fmt.Sprintf("Error deleting bookmark for %s, %v", userId, err))
-		return events.APIGatewayV2HTTPResponse{
-			Body:       "Error deleting bookmark",
-			StatusCode: http.StatusInternalServerError,
-		}, nil
-	}
-
-	return events.APIGatewayV2HTTPResponse{
 		StatusCode: http.StatusOK,
 	}, nil
 }
