@@ -16,10 +16,12 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 )
 
 const (
-	getQuestionsPath = "GET /rb/questions"
+	getQuestionsPath     = "GET /rb/questions"
+	getQuestionCountPath = "POST /rb/questions/count"
 )
 
 var (
@@ -46,6 +48,8 @@ func handler(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPRes
 		switch path {
 		case getQuestionsPath:
 			return getQuestions(request)
+		case getQuestionCountPath:
+			return getQuestionCount(request)
 		default:
 			return events.APIGatewayV2HTTPResponse{
 				Body:       "Path Not Found",
@@ -134,6 +138,51 @@ func getQuestions(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HT
 		Body:       string(response),
 		StatusCode: http.StatusOK,
 	}, nil
+}
+
+func getQuestionCount(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
+	ids := strings.Split(request.Body, ",")
+
+	questionCount := make(map[string]int)
+	for _, id := range ids {
+		count, err := getQuestionCountByExamId(id)
+		if err != nil {
+			log.Println(fmt.Sprintf("Error getting question count for %s: %v", id, err))
+		}
+		questionCount[id] = count
+	}
+
+	response, _ := json.Marshal(models.GetQuestionCountResponse{
+		Count: questionCount,
+	})
+
+	return events.APIGatewayV2HTTPResponse{
+		Body:       string(response),
+		StatusCode: http.StatusOK,
+	}, nil
+}
+
+func getQuestionCountByExamId(examId string) (int, error) {
+	builder := expression.Key("exam_id").Equal(expression.Value(examId))
+	expr, _ := expression.NewBuilder().WithKeyCondition(builder).Build()
+
+	resp, err := dbClient.Query(context.TODO(), &dynamodb.QueryInput{
+		TableName:                 aws.String(questionsTableName),
+		KeyConditionExpression:    expr.KeyCondition(),
+		ExpressionAttributeNames:  expr.Names(),
+		ExpressionAttributeValues: expr.Values(),
+		ScanIndexForward:          aws.Bool(false), // DESCENDING order
+		Limit:                     aws.Int32(1),
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to query: %w", err)
+	}
+
+	if len(resp.Items) == 0 {
+		return 0, fmt.Errorf("no items found for partition key: %s", examId)
+	}
+
+	return strconv.Atoi(resp.Items[0]["question_id"].(*types.AttributeValueMemberN).Value)
 }
 
 func main() {

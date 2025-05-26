@@ -17,3 +17,7 @@ type Option struct {
 	Text        string   `json:"text"`
 	S3ImageURLs []string `json:"s3ImageUrls"`
 }
+
+type GetQuestionCountResponse struct {
+	Count map[string]int `json:"count"`
+}
