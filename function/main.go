@@ -130,9 +130,7 @@ func getQuestions(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HT
 		}
 	}
 
-	response, _ := json.Marshal(models.GetQuestionsResponse{
-		Questions: questions,
-	})
+	response, _ := json.Marshal(questions)
 
 	return events.APIGatewayV2HTTPResponse{
 		Body:       string(response),

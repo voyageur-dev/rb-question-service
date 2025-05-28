@@ -1,9 +1,5 @@
 package models
 
-type GetQuestionsResponse struct {
-	Questions []Question `json:"questions"`
-}
-
 type Question struct {
 	ExamID      string   `json:"examId"`
 	QuestionID  int      `json:"questionId"`
