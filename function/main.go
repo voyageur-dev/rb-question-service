@@ -150,9 +150,7 @@ func getQuestionCount(request events.APIGatewayV2HTTPRequest) (events.APIGateway
 		questionCount[id] = count
 	}
 
-	response, _ := json.Marshal(models.GetQuestionCountResponse{
-		Count: questionCount,
-	})
+	response, _ := json.Marshal(questionCount)
 
 	return events.APIGatewayV2HTTPResponse{
 		Body:       string(response),
