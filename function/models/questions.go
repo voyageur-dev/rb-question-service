@@ -1,12 +1,12 @@
 package models
 
 type Question struct {
-	ProviderId  string   `json:"providerId"`
-	ExamID      string   `json:"examId"`
-	QuestionID  string   `json:"questionId"`
-	Options     []Option `json:"options"`
-	Description []Item   `json:"description"`
-	Answer      []Item   `json:"answer"`
+	ProviderId  string    `json:"providerId"`
+	ExamID      string    `json:"examId"`
+	QuestionID  string    `json:"questionId"`
+	Options     *[]Option `json:"options,omitempty"`
+	Description []Item    `json:"description"`
+	Answer      *[]Item   `json:"answer,omitempty"`
 }
 
 type Option struct {
@@ -16,6 +16,6 @@ type Option struct {
 }
 
 type Item struct {
-	Content string `json:"content"`
-	Type    string `json:"type"`
+	Content *string `json:"content,omitempty"`
+	Type    string  `json:"type"`
 }

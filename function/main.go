@@ -95,48 +95,35 @@ func getQuestions(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HT
 
 	questions := make([]models.Question, result.Count)
 	for i, item := range result.Items {
-		log.Println(item)
 		description := make([]models.Item, 0)
 		if descriptionItems, ok := item["description"]; ok {
 			description = make([]models.Item, len(descriptionItems.(*types.AttributeValueMemberL).Value))
 			for j, descriptionItem := range descriptionItems.(*types.AttributeValueMemberL).Value {
-				log.Println(descriptionItem)
-				description[j] = models.Item{
-					Content: descriptionItem.(*types.AttributeValueMemberM).Value["content"].(*types.AttributeValueMemberS).Value,
-					Type:    descriptionItem.(*types.AttributeValueMemberM).Value["type"].(*types.AttributeValueMemberS).Value,
-				}
+				description[j] = parseItem(descriptionItem)
 			}
 		}
 
-		answer := make([]models.Item, 0)
+		var answer []models.Item
 		if answerItems, ok := item["answer"]; ok {
-			answer = make([]models.Item, len(answerItems.(*types.AttributeValueMemberL).Value))
-			for j, answerItem := range answerItems.(*types.AttributeValueMemberL).Value {
-				answer[j] = models.Item{
-					Content: answerItem.(*types.AttributeValueMemberM).Value["content"].(*types.AttributeValueMemberS).Value,
-					Type:    answerItem.(*types.AttributeValueMemberM).Value["type"].(*types.AttributeValueMemberS).Value,
-				}
+			for _, answerItem := range answerItems.(*types.AttributeValueMemberL).Value {
+				answer = append(answer, parseItem(answerItem))
 			}
 		}
 
-		options := make([]models.Option, len(item["options"].(*types.AttributeValueMemberL).Value))
-		for j, option := range item["options"].(*types.AttributeValueMemberL).Value {
-			optionDescription := make([]models.Item, 0)
+		var options []models.Option
+		for _, option := range item["options"].(*types.AttributeValueMemberL).Value {
+			var optionDescription []models.Item
 			if optionDescriptionItems, ok := option.(*types.AttributeValueMemberM).Value["description"]; ok {
-				optionDescription = make([]models.Item, len(optionDescriptionItems.(*types.AttributeValueMemberL).Value))
-				for k, descriptionItem := range optionDescriptionItems.(*types.AttributeValueMemberL).Value {
-					optionDescription[k] = models.Item{
-						Content: descriptionItem.(*types.AttributeValueMemberM).Value["content"].(*types.AttributeValueMemberS).Value,
-						Type:    descriptionItem.(*types.AttributeValueMemberM).Value["type"].(*types.AttributeValueMemberS).Value,
-					}
+				for _, descriptionItem := range optionDescriptionItems.(*types.AttributeValueMemberL).Value {
+					optionDescription = append(optionDescription, parseItem(descriptionItem))
 				}
 			}
 
-			options[j] = models.Option{
+			options = append(options, models.Option{
 				IsCorrect:   option.(*types.AttributeValueMemberM).Value["isCorrect"].(*types.AttributeValueMemberBOOL).Value,
 				Id:          option.(*types.AttributeValueMemberM).Value["id"].(*types.AttributeValueMemberS).Value,
 				Description: optionDescription,
-			}
+			})
 		}
 
 		ids := strings.Split(item["providerExamKey"].(*types.AttributeValueMemberS).Value, "#")
@@ -145,9 +132,15 @@ func getQuestions(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HT
 			ProviderId:  ids[0],
 			ExamID:      ids[1],
 			QuestionID:  questionId,
-			Options:     options,
 			Description: description,
-			Answer:      answer,
+		}
+
+		if answer != nil {
+			questions[i].Answer = &answer
+		}
+
+		if options != nil {
+			questions[i].Options = &options
 		}
 	}
 
@@ -157,6 +150,18 @@ func getQuestions(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HT
 		Body:       string(response),
 		StatusCode: http.StatusOK,
 	}, nil
+}
+
+func parseItem(rawItem types.AttributeValue) models.Item {
+	attrMap := rawItem.(*types.AttributeValueMemberM).Value
+	item := models.Item{
+		Type: attrMap["type"].(*types.AttributeValueMemberS).Value,
+	}
+
+	if contentAttr, ok := attrMap["content"].(*types.AttributeValueMemberS); ok {
+		item.Content = &contentAttr.Value
+	}
+	return item
 }
 
 func main() {
