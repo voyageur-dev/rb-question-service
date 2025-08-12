@@ -5,6 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"function/models"
+	"log"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -12,16 +18,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/expression"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"log"
-	"net/http"
-	"os"
-	"strconv"
-	"strings"
 )
 
 const (
-	getQuestionsPath     = "GET /rb/questions"
-	getQuestionCountPath = "POST /rb/questions/count"
+	getQuestionsPath = "GET /rb/questions"
 )
 
 var (
@@ -48,8 +48,6 @@ func handler(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPRes
 		switch path {
 		case getQuestionsPath:
 			return getQuestions(request)
-		case getQuestionCountPath:
-			return getQuestionCount(request)
 		default:
 			return events.APIGatewayV2HTTPResponse{
 				Body:       "Path Not Found",
@@ -61,12 +59,14 @@ func handler(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPRes
 
 func getQuestions(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
 	queryParams := request.QueryStringParameters
+	providerId, _ := queryParams["providerId"]
 	examId, _ := queryParams["examId"]
 	lastEvaluatedKey, hasLastEvaluatedKey := queryParams["lastEvaluatedKey"]
 	pageSize, _ := queryParams["pageSize"]
 	pageSizeNum, _ := strconv.Atoi(pageSize)
 
-	builder := expression.Key("exam_id").Equal(expression.Value(examId))
+	providerExamKey := fmt.Sprintf("%s#%s", providerId, examId)
+	builder := expression.Key("providerExamKey").Equal(expression.Value(providerExamKey))
 	expr, _ := expression.NewBuilder().WithKeyCondition(builder).Build()
 
 	input := &dynamodb.QueryInput{
@@ -79,8 +79,8 @@ func getQuestions(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HT
 
 	if hasLastEvaluatedKey {
 		input.ExclusiveStartKey = map[string]types.AttributeValue{
-			"exam_id":     &types.AttributeValueMemberS{Value: examId},
-			"question_id": &types.AttributeValueMemberN{Value: lastEvaluatedKey},
+			"providerExamKey": &types.AttributeValueMemberS{Value: providerExamKey},
+			"questionId":      &types.AttributeValueMemberN{Value: lastEvaluatedKey},
 		}
 	}
 
@@ -95,38 +95,45 @@ func getQuestions(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HT
 
 	questions := make([]models.Question, result.Count)
 	for i, item := range result.Items {
-		s3ImageUrls := make([]string, 0)
-		if itemS3ImageUrls, ok := item["s3_image_urls"]; ok {
-			s3ImageUrls = make([]string, len(itemS3ImageUrls.(*types.AttributeValueMemberL).Value))
-			for j, url := range item["s3_image_urls"].(*types.AttributeValueMemberL).Value {
-				s3ImageUrls[j] = url.(*types.AttributeValueMemberS).Value
+		descriptions := make([]models.Description, 0)
+		if descriptionItems, ok := item["description"]; ok {
+			descriptions = make([]models.Description, len(descriptionItems.(*types.AttributeValueMemberL).Value))
+			for j, descriptionItem := range descriptionItems.(*types.AttributeValueMemberL).Value {
+				descriptions[j] = models.Description{
+					Content: descriptionItem.(*types.AttributeValueMemberM).Value["content"].(*types.AttributeValueMemberS).Value,
+					Type:    descriptionItem.(*types.AttributeValueMemberM).Value["type"].(*types.AttributeValueMemberS).Value,
+				}
 			}
 		}
 
 		options := make([]models.Option, len(item["options"].(*types.AttributeValueMemberL).Value))
 		for j, option := range item["options"].(*types.AttributeValueMemberL).Value {
-			optionS3ImageUrls := make([]string, 0)
-			if itemOptionS3ImageUrls, ok := option.(*types.AttributeValueMemberM).Value["s3_image_urls"]; ok {
-				optionS3ImageUrls = make([]string, len(itemOptionS3ImageUrls.(*types.AttributeValueMemberL).Value))
-				for k, url := range itemOptionS3ImageUrls.(*types.AttributeValueMemberL).Value {
-					optionS3ImageUrls[k] = url.(*types.AttributeValueMemberS).Value
+			optionDescriptions := make([]models.Description, 0)
+			if optionDescriptionItems, ok := option.(*types.AttributeValueMemberM).Value["description"]; ok {
+				optionDescriptions = make([]models.Description, len(optionDescriptionItems.(*types.AttributeValueMemberL).Value))
+				for k, descriptionItem := range optionDescriptionItems.(*types.AttributeValueMemberL).Value {
+					optionDescriptions[k] = models.Description{
+						Content: descriptionItem.(*types.AttributeValueMemberM).Value["content"].(*types.AttributeValueMemberS).Value,
+						Type:    descriptionItem.(*types.AttributeValueMemberM).Value["type"].(*types.AttributeValueMemberS).Value,
+					}
 				}
 			}
 
 			options[j] = models.Option{
-				IsCorrect:   option.(*types.AttributeValueMemberM).Value["is_correct"].(*types.AttributeValueMemberBOOL).Value,
-				Text:        option.(*types.AttributeValueMemberM).Value["text"].(*types.AttributeValueMemberS).Value,
-				S3ImageURLs: optionS3ImageUrls,
+				IsCorrect:    option.(*types.AttributeValueMemberM).Value["isCorrect"].(*types.AttributeValueMemberBOOL).Value,
+				Id:           option.(*types.AttributeValueMemberM).Value["id"].(*types.AttributeValueMemberS).Value,
+				Descriptions: optionDescriptions,
 			}
 		}
 
-		questionId, _ := strconv.Atoi(item["question_id"].(*types.AttributeValueMemberN).Value)
+		ids := strings.Split(item["providerExamKey"].(*types.AttributeValueMemberS).Value, "#")
+		questionId := item["questionId"].(*types.AttributeValueMemberS).Value
 		questions[i] = models.Question{
-			ExamID:      item["exam_id"].(*types.AttributeValueMemberS).Value,
-			QuestionID:  questionId,
-			Options:     options,
-			Question:    item["question"].(*types.AttributeValueMemberS).Value,
-			S3ImageURLs: s3ImageUrls,
+			ProviderId:   ids[0],
+			ExamID:       ids[1],
+			QuestionID:   questionId,
+			Options:      options,
+			Descriptions: descriptions,
 		}
 	}
 
@@ -136,49 +143,6 @@ func getQuestions(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HT
 		Body:       string(response),
 		StatusCode: http.StatusOK,
 	}, nil
-}
-
-func getQuestionCount(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
-	ids := strings.Split(request.Body, ",")
-
-	questionCount := make(map[string]int)
-	for _, id := range ids {
-		count, err := getQuestionCountByExamId(id)
-		if err != nil {
-			log.Println(fmt.Sprintf("Error getting question count for %s: %v", id, err))
-		}
-		questionCount[id] = count
-	}
-
-	response, _ := json.Marshal(questionCount)
-
-	return events.APIGatewayV2HTTPResponse{
-		Body:       string(response),
-		StatusCode: http.StatusOK,
-	}, nil
-}
-
-func getQuestionCountByExamId(examId string) (int, error) {
-	builder := expression.Key("exam_id").Equal(expression.Value(examId))
-	expr, _ := expression.NewBuilder().WithKeyCondition(builder).Build()
-
-	resp, err := dbClient.Query(context.TODO(), &dynamodb.QueryInput{
-		TableName:                 aws.String(questionsTableName),
-		KeyConditionExpression:    expr.KeyCondition(),
-		ExpressionAttributeNames:  expr.Names(),
-		ExpressionAttributeValues: expr.Values(),
-		ScanIndexForward:          aws.Bool(false), // DESCENDING order
-		Limit:                     aws.Int32(1),
-	})
-	if err != nil {
-		return 0, fmt.Errorf("failed to query: %w", err)
-	}
-
-	if len(resp.Items) == 0 {
-		return 0, fmt.Errorf("no items found for partition key: %s", examId)
-	}
-
-	return strconv.Atoi(resp.Items[0]["question_id"].(*types.AttributeValueMemberN).Value)
 }
 
 func main() {

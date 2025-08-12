@@ -1,15 +1,20 @@
 package models
 
 type Question struct {
-	ExamID      string   `json:"examId"`
-	QuestionID  int      `json:"questionId"`
-	Options     []Option `json:"options"`
-	Question    string   `json:"question"`
-	S3ImageURLs []string `json:"s3ImageUrls"`
+	ProviderId   string        `json:"providerId"`
+	ExamID       string        `json:"examId"`
+	QuestionID   string        `json:"questionId"`
+	Options      []Option      `json:"options"`
+	Descriptions []Description `json:"description"` // maybe rename description -> descriptions and reflect the change on db schema
 }
 
 type Option struct {
-	IsCorrect   bool     `json:"isCorrect"`
-	Text        string   `json:"text"`
-	S3ImageURLs []string `json:"s3ImageUrls"`
+	Descriptions []Description `json:"description"` // maybe rename description -> descriptions and reflect the change on db schema
+	IsCorrect    bool          `json:"isCorrect"`
+	Id           string        `json:"id"`
+}
+
+type Description struct {
+	Content string `json:"content"`
+	Type    string `json:"type"`
 }
