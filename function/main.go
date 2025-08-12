@@ -95,10 +95,12 @@ func getQuestions(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HT
 
 	questions := make([]models.Question, result.Count)
 	for i, item := range result.Items {
+		log.Println(item)
 		description := make([]models.Item, 0)
 		if descriptionItems, ok := item["description"]; ok {
 			description = make([]models.Item, len(descriptionItems.(*types.AttributeValueMemberL).Value))
 			for j, descriptionItem := range descriptionItems.(*types.AttributeValueMemberL).Value {
+				log.Println(descriptionItem)
 				description[j] = models.Item{
 					Content: descriptionItem.(*types.AttributeValueMemberM).Value["content"].(*types.AttributeValueMemberS).Value,
 					Type:    descriptionItem.(*types.AttributeValueMemberM).Value["type"].(*types.AttributeValueMemberS).Value,
