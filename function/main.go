@@ -80,7 +80,7 @@ func getQuestions(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HT
 	if hasLastEvaluatedKey {
 		input.ExclusiveStartKey = map[string]types.AttributeValue{
 			"providerExamKey": &types.AttributeValueMemberS{Value: providerExamKey},
-			"questionId":      &types.AttributeValueMemberN{Value: lastEvaluatedKey},
+			"questionId":      &types.AttributeValueMemberS{Value: lastEvaluatedKey},
 		}
 	}
 
@@ -95,24 +95,35 @@ func getQuestions(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HT
 
 	questions := make([]models.Question, result.Count)
 	for i, item := range result.Items {
-		descriptions := make([]models.Description, 0)
+		description := make([]models.Item, 0)
 		if descriptionItems, ok := item["description"]; ok {
-			descriptions = make([]models.Description, len(descriptionItems.(*types.AttributeValueMemberL).Value))
+			description = make([]models.Item, len(descriptionItems.(*types.AttributeValueMemberL).Value))
 			for j, descriptionItem := range descriptionItems.(*types.AttributeValueMemberL).Value {
-				descriptions[j] = models.Description{
+				description[j] = models.Item{
 					Content: descriptionItem.(*types.AttributeValueMemberM).Value["content"].(*types.AttributeValueMemberS).Value,
 					Type:    descriptionItem.(*types.AttributeValueMemberM).Value["type"].(*types.AttributeValueMemberS).Value,
 				}
 			}
 		}
 
+		answer := make([]models.Item, 0)
+		if answerItems, ok := item["answer"]; ok {
+			answer = make([]models.Item, len(answerItems.(*types.AttributeValueMemberL).Value))
+			for j, answerItem := range answerItems.(*types.AttributeValueMemberL).Value {
+				answer[j] = models.Item{
+					Content: answerItem.(*types.AttributeValueMemberM).Value["content"].(*types.AttributeValueMemberS).Value,
+					Type:    answerItem.(*types.AttributeValueMemberM).Value["type"].(*types.AttributeValueMemberS).Value,
+				}
+			}
+		}
+
 		options := make([]models.Option, len(item["options"].(*types.AttributeValueMemberL).Value))
 		for j, option := range item["options"].(*types.AttributeValueMemberL).Value {
-			optionDescriptions := make([]models.Description, 0)
+			optionDescription := make([]models.Item, 0)
 			if optionDescriptionItems, ok := option.(*types.AttributeValueMemberM).Value["description"]; ok {
-				optionDescriptions = make([]models.Description, len(optionDescriptionItems.(*types.AttributeValueMemberL).Value))
+				optionDescription = make([]models.Item, len(optionDescriptionItems.(*types.AttributeValueMemberL).Value))
 				for k, descriptionItem := range optionDescriptionItems.(*types.AttributeValueMemberL).Value {
-					optionDescriptions[k] = models.Description{
+					optionDescription[k] = models.Item{
 						Content: descriptionItem.(*types.AttributeValueMemberM).Value["content"].(*types.AttributeValueMemberS).Value,
 						Type:    descriptionItem.(*types.AttributeValueMemberM).Value["type"].(*types.AttributeValueMemberS).Value,
 					}
@@ -120,20 +131,21 @@ func getQuestions(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HT
 			}
 
 			options[j] = models.Option{
-				IsCorrect:    option.(*types.AttributeValueMemberM).Value["isCorrect"].(*types.AttributeValueMemberBOOL).Value,
-				Id:           option.(*types.AttributeValueMemberM).Value["id"].(*types.AttributeValueMemberS).Value,
-				Descriptions: optionDescriptions,
+				IsCorrect:   option.(*types.AttributeValueMemberM).Value["isCorrect"].(*types.AttributeValueMemberBOOL).Value,
+				Id:          option.(*types.AttributeValueMemberM).Value["id"].(*types.AttributeValueMemberS).Value,
+				Description: optionDescription,
 			}
 		}
 
 		ids := strings.Split(item["providerExamKey"].(*types.AttributeValueMemberS).Value, "#")
 		questionId := item["questionId"].(*types.AttributeValueMemberS).Value
 		questions[i] = models.Question{
-			ProviderId:   ids[0],
-			ExamID:       ids[1],
-			QuestionID:   questionId,
-			Options:      options,
-			Descriptions: descriptions,
+			ProviderId:  ids[0],
+			ExamID:      ids[1],
+			QuestionID:  questionId,
+			Options:     options,
+			Description: description,
+			Answer:      answer,
 		}
 	}
 
