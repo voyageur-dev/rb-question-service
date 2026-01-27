@@ -147,6 +147,7 @@ func getQuestions(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HT
 	response, _ := json.Marshal(questions)
 
 	return events.APIGatewayV2HTTPResponse{
+		Headers:    map[string]string{"Content-Type": "application/json"},
 		Body:       string(response),
 		StatusCode: http.StatusOK,
 	}, nil
